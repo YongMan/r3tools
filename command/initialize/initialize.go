@@ -1,17 +1,21 @@
 package initialize
 
 import (
-	"../../utils"
 	"fmt"
 	"github.com/codegangsta/cli"
+	"github.com/fatih/color"
 	"os"
 	"strings"
+	"time"
 )
 
 var (
 	flags = []cli.Flag{
 		cli.StringFlag{"s,service", "", "the service to initialize"},
 		cli.StringFlag{"l,logic", "", "logic machine rooms list"},
+		cli.StringFlag{"m,master", "", "master machine rooms list"},
+		cli.IntFlag{"r,replicas", 0, "replicaset of each master node"},
+		cli.BoolFlag{"force", "reset nodes before init cluster force"},
 	}
 
 	Command = cli.Command{
@@ -23,21 +27,36 @@ var (
 )
 
 func action(c *cli.Context) {
+	red := color.New(color.FgRed).SprintFunc()
+	green := color.New(color.FgGreen).SprintFunc()
+	yellow := color.New(color.FgYellow).SprintFunc()
+	cyan := color.New(color.FgCyan).SprintFunc()
+	var cmd string
+
 	s := c.String("s")
 	if s == "" {
-		fmt.Println("service must be assigned")
+		fmt.Println(red("-s service must be assigned"))
 		os.Exit(-1)
 	}
 	l := c.String("l")
 	if l == "" {
-		fmt.Println("-l logic machine room must be assigned")
+		fmt.Println(red("-l logic machine room must be assigned"))
 		os.Exit(-1)
 	}
+	m := c.String("m")
+	if m == "" {
+		fmt.Println(red("-m master machine rooms must be assigned"))
+		os.Exit(-1)
+	}
+	force := c.Bool("force")
+	replicas := c.Int("r")
+
 	allnodes := []*Node{}
+	masterRooms := strings.Split(m, ",")
 	rooms := strings.Split(l, ",")
 	for _, room := range rooms {
 		service_name := fmt.Sprintf("%s.osp.%s", s, room)
-		nodes, err := GetNodes(service_name)
+		nodes, err := getNodes(service_name)
 		if err == nil {
 			for _, n := range nodes {
 				/* set logic mr */
@@ -47,10 +66,35 @@ func action(c *cli.Context) {
 		allnodes = append(allnodes, nodes...)
 	}
 	/* done get allnodes */
+	if replicas != 0 && len(allnodes)%(replicas+1) != 0 {
+		fmt.Printf("%s. Not enough nodes\n", red("ERROR"))
+		os.Exit(-1)
+	}
+
+	/* reset all nodes */
+	if force {
+		fmt.Printf("Type %s to continue: ", green("yes"))
+		fmt.Printf("%s\n", red("(--force will reset the cluster)"))
+
+		fmt.Scanf("%s\n", &cmd)
+		if cmd != "yes" {
+			os.Exit(0)
+		}
+		resp, err := resetNodes(allnodes)
+		if err != nil {
+			fmt.Println(resp, err)
+		}
+	}
+
 	/* check nodes state */
 	for _, node := range allnodes {
-		node.Alive = IsAlive(node)
-		fmt.Println(node.Ip, " ", node.Port, " ", node.Alive)
+		node.Alive = isAlive(node)
+		fmt.Printf("connecting to %s\t%s\t", node.Ip, node.Port)
+		if node.Alive {
+			fmt.Printf("%s\n", green("OK"))
+		} else {
+			fmt.Printf("%s\n", red("FAILED"))
+		}
 	}
 
 	/* check and set state */
@@ -60,36 +104,67 @@ func action(c *cli.Context) {
 
 	/* validate the state and continue */
 	if validateProcess(allnodes) == false {
-		fmt.Println("Not all nodes have the right status")
+		fmt.Printf("%s Not all nodes have the right status\n", red("Error"))
 		os.Exit(-1)
 	}
 
-}
-
-func validateProcess(nodes []*Node) bool {
-	return true
-}
-
-func checkAndSetState(node *Node) {
-	if node.Alive == false {
-		return
-	}
-	info, err := ClusterNodes(node)
+	/* build cluster */
+	masterNodes, err := buildCluster(allnodes, replicas, masterRooms, rooms)
 	if err != nil {
-		return
-	}
-	if len(utils.SplitLine(info)) > 1 {
-		node.Met = true
-		return
+		fmt.Printf("%s buildCluster failed\n", red("Error"))
+		os.Exit(-1)
 	}
 
-	//set info state
-	cols := strings.Fields(info)
-	if len(cols) != 8 {
-		return
+	err = assignSlots(masterNodes)
+	if err != nil {
+		fmt.Printf("%s assignSlot failed\n", red("Error"))
+		os.Exit(-1)
 	}
-	node.Id = cols[0]
-	role := cols[2]
-	node.Role = strings.Split(role, ",")[1]
 
+	/* assignment summary */
+	for _, node := range masterNodes {
+		fmt.Printf("%s %s\t%s\t%s\t%s\n", yellow("M:"), node.Id, node.Ip, node.Port, node.SlotsRange)
+		slaves := getSlaves(allnodes, node)
+		for _, slave := range slaves {
+			fmt.Printf("%s %s\t%s\t%s\t%s\n", cyan("S:"), slave.Id, slave.Ip, slave.Port, slave.MasterId)
+		}
+	}
+	fmt.Printf("Type %s to continue: ", green("yes"))
+	fmt.Scanf("%s\n", &cmd)
+	if cmd != "yes" {
+		os.Exit(0)
+	}
+
+	/* send cmd to cluster */
+	meetEach(allnodes)
+
+	for _, node := range masterNodes {
+		fmt.Printf("Node:%s\n", node.Id)
+		fmt.Printf("%-40s", "setting slots...")
+		resp, err := addSlotRange(node)
+		if err != nil {
+			fmt.Println(red(resp))
+			break
+		} else {
+			fmt.Println(green(resp))
+		}
+		slaves := getSlaves(allnodes, node)
+		fmt.Printf("%-40s", "setting replicas...")
+		resp, err = setReplicas(slaves)
+		if err != nil {
+			fmt.Printf("%s\n", red(resp))
+			break
+		} else {
+			fmt.Printf("%s\n", green(resp))
+		}
+	}
+
+	fmt.Printf("Checking...\n")
+	time.Sleep(time.Second * 5)
+	/* cluster info check */
+	if checkClusterInfo(allnodes) {
+		fmt.Printf("%s. All node aggree the configure\n", green("OK"))
+	} else {
+		fmt.Printf("%s. Node configure inconsistent\n", red("Error"))
+	}
 }

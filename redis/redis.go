@@ -26,8 +26,8 @@ const (
 
 	NUM_RETRY     = 3
 	CONN_TIMEOUT  = 1 * time.Second
-	READ_TIMEOUT  = 2 * time.Second
-	WRITE_TIMEOUT = 2 * time.Second
+	READ_TIMEOUT  = 60 * time.Second
+	WRITE_TIMEOUT = 60 * time.Second
 )
 
 func dial(addr string) (redis.Conn, error) {
@@ -297,8 +297,87 @@ func ClusterReset(addr string, hard bool) (string, error) {
 	return resp, nil
 }
 
-/// Info
+func AddSlotRange(addr string, start, end int) (string, error) {
+	conn, err := dial(addr)
+	if err != nil {
+		return "connect failed", ErrConnFailed
+	}
+	defer conn.Close()
+	var resp string
+	for i := start; i <= end; i++ {
+		resp, err = redis.String(conn.Do("cluster", "addslots", i))
+		if err != nil {
+			return resp, err
+		}
+	}
+	return resp, nil
+}
 
+func FlushAll(addr string) (string, error) {
+	conn, err := dial(addr)
+	if err != nil {
+		return "connect failed", ErrConnFailed
+	}
+	defer conn.Close()
+	resp, err := redis.String(conn.Do("flushall"))
+	if err != nil {
+		return resp, err
+	}
+	return resp, nil
+}
+
+/// Cluster Info
+type ClusterInfo map[string]string
+
+func FetchClusterInfo(addr string) (*ClusterInfo, error) {
+	inner := func(addr string) (*ClusterInfo, error) {
+		conn, err := dial(addr)
+		if err != nil {
+			return nil, ErrConnFailed
+		}
+		defer conn.Close()
+
+		resp, err := redis.String(conn.Do("cluster", "info"))
+		if err != nil {
+			return nil, err
+		}
+		clusterinfo := map[string]string{}
+		lines := strings.Split(resp, "\r\n")
+		for _, line := range lines {
+			xs := strings.Split(line, ":")
+			if len(xs) != 2 {
+				continue
+			}
+			key := xs[0]
+			value := xs[1]
+			clusterinfo[key] = value
+		}
+
+		clusterInfo := ClusterInfo(clusterinfo)
+		return &clusterInfo, nil
+	}
+	retry := NUM_RETRY
+	var err error
+	var clusterInfo *ClusterInfo
+	for retry > 0 {
+		clusterInfo, err = inner(addr)
+		if err == nil {
+			return clusterInfo, err
+		}
+		retry--
+	}
+	return nil, err
+}
+
+func (info *ClusterInfo) Get(key string) string {
+	return (*info)[key]
+}
+
+func (info *ClusterInfo) GetInt64(key string) (int64, error) {
+	return strconv.ParseInt((*info)[key], 10, 64)
+}
+
+/// Info
 type RedisInfo map[string]string
 
 func FetchInfo(addr, section string) (*RedisInfo, error) {
@@ -333,9 +412,8 @@ func FetchInfo(addr, section string) (*RedisInfo, error) {
 	var redisInfo *RedisInfo
 	for retry > 0 {
 		redisInfo, err = inner(addr, section)
-		fmt.Println(redisInfo, err)
 		if err == nil {
-			return redisInfo, nil
+			return redisInfo, err
 		}
 		retry--
 	}
