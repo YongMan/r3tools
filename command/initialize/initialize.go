@@ -6,7 +6,6 @@ import (
 	"github.com/fatih/color"
 	"os"
 	"strings"
-	"time"
 )
 
 var (
@@ -123,7 +122,7 @@ func action(c *cli.Context) {
 
 	/* assignment summary */
 	for _, node := range masterNodes {
-		fmt.Printf("%s %s\t%s\t%s\t%s\n", yellow("M:"), node.Id, node.Ip, node.Port, node.SlotsRange)
+		fmt.Printf("%s %s\t%s\t%s\t%s\n", yellow("M:"), node.Id, node.Ip, node.Port, yellow(node.SlotsRange))
 		slaves := getSlaves(allnodes, node)
 		for _, slave := range slaves {
 			fmt.Printf("%s %s\t%s\t%s\t%s\n", cyan("S:"), slave.Id, slave.Ip, slave.Port, slave.MasterId)
@@ -159,12 +158,10 @@ func action(c *cli.Context) {
 		}
 	}
 
-	fmt.Printf("Checking...\n")
-	time.Sleep(time.Second * 5)
 	/* cluster info check */
 	if checkClusterInfo(allnodes) {
 		fmt.Printf("%s. All node aggree the configure\n", green("OK"))
 	} else {
-		fmt.Printf("%s. Node configure inconsistent\n", red("Error"))
+		fmt.Printf("%s. Node configure inconsistent or slots incomplete\n", red("Error"))
 	}
 }

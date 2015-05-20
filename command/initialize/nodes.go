@@ -52,14 +52,14 @@ func getNodes(service string) ([]*Node, error) {
 func validateProcess(nodes []*Node) bool {
 	res := true
 	for _, node := range nodes {
-		if node.Id == "" {
-			fmt.Printf("%s:%s in wrong state\n", node.Ip, node.Port)
+		if node.Met {
+			fmt.Printf("%s:%s has jioned a cluster\n", node.Ip, node.Port)
 			res = false
 		} else if node.Alive == false {
 			fmt.Printf("%s:%s is not alive\n", node.Ip, node.Port)
 			res = false
-		} else if node.Met {
-			fmt.Printf("%s:%s has jioned a cluster\n", node.Ip, node.Port)
+		} else if node.Id == "" {
+			fmt.Printf("%s:%s in wrong state\n", node.Ip, node.Port)
 			res = false
 		} else if node.Role != "master" {
 			fmt.Printf("%s:%s is not a master\n", node.Ip, node.Port)

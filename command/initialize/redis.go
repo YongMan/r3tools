@@ -4,6 +4,7 @@ import (
 	"../../redis"
 	"fmt"
 	"strconv"
+	"time"
 )
 
 func isAlive(node *Node) bool {
@@ -81,41 +82,57 @@ func setReplicas(slaves []*Node) (string, error) {
 }
 
 func checkClusterInfo(nodes []*Node) bool {
-	var (
-		clusterstate           string
-		cluster_slots_assigned string
-		cluster_slots_ok       string
-		cluster_slots_pfail    string
-		cluster_slots_fail     string
-		cluster_known_nodes    string
-		cluster_size           string
-	)
+	retry := 3
+	inner := func(nodes []*Node) bool {
+		var (
+			clusterstate           string
+			cluster_slots_assigned string
+			cluster_slots_ok       string
+			cluster_slots_pfail    string
+			cluster_slots_fail     string
+			cluster_known_nodes    string
+			cluster_size           string
+		)
 
-	for idx, node := range nodes {
-		addr := fmt.Sprintf("%s:%s", node.Ip, node.Port)
-		ci, err := redis.FetchClusterInfo(addr)
-		if err != nil {
-			return false
-		}
-		if idx == 0 {
-			clusterstate = ci.Get("cluster_state")
-			cluster_slots_assigned = ci.Get("cluster_slots_assigned")
-			cluster_slots_ok = ci.Get("cluster_slots_ok")
-			cluster_slots_pfail = ci.Get("cluster_slots_pfail")
-			cluster_slots_fail = ci.Get("cluster_slots_fail")
-			cluster_known_nodes = ci.Get("cluster_known_nodes")
-			cluster_size = ci.Get("cluster_size")
-		} else {
-			if clusterstate != ci.Get("cluster_state") ||
-				cluster_slots_assigned != ci.Get("cluster_slots_assigned") ||
-				cluster_slots_ok != ci.Get("cluster_slots_ok") ||
-				cluster_slots_pfail != ci.Get("cluster_slots_pfail") ||
-				cluster_slots_fail != ci.Get("cluster_slots_fail") ||
-				cluster_known_nodes != ci.Get("cluster_known_nodes") ||
-				cluster_size != ci.Get("cluster_size") {
+		for idx, node := range nodes {
+			addr := fmt.Sprintf("%s:%s", node.Ip, node.Port)
+			ci, err := redis.FetchClusterInfo(addr)
+			if err != nil {
 				return false
 			}
+			if idx == 0 {
+				clusterstate = ci.Get("cluster_state")
+				cluster_slots_assigned = ci.Get("cluster_slots_assigned")
+				cluster_slots_ok = ci.Get("cluster_slots_ok")
+				if cluster_slots_ok != "16384" {
+					return false
+				}
+				cluster_slots_pfail = ci.Get("cluster_slots_pfail")
+				cluster_slots_fail = ci.Get("cluster_slots_fail")
+				cluster_known_nodes = ci.Get("cluster_known_nodes")
+				cluster_size = ci.Get("cluster_size")
+			} else {
+				if clusterstate != ci.Get("cluster_state") ||
+					cluster_slots_assigned != ci.Get("cluster_slots_assigned") ||
+					cluster_slots_ok != ci.Get("cluster_slots_ok") ||
+					cluster_slots_pfail != ci.Get("cluster_slots_pfail") ||
+					cluster_slots_fail != ci.Get("cluster_slots_fail") ||
+					cluster_known_nodes != ci.Get("cluster_known_nodes") ||
+					cluster_size != ci.Get("cluster_size") {
+					return false
+				}
+			}
 		}
+		return true
 	}
-	return true
+
+	for retry > 0 {
+		time.Sleep(time.Second * 5)
+		fmt.Printf("checking %d times\n", 4-retry)
+		if inner(nodes) {
+			return true
+		}
+		retry = retry - 1
+	}
+	return false
 }
