@@ -136,3 +136,39 @@ func checkClusterInfo(nodes []*Node) bool {
 	}
 	return false
 }
+
+func rwMasterState(node *Node) (string, error) {
+	addr := fmt.Sprintf("%s:%s", node.Ip, node.Port)
+	resp, err := redis.EnableRead(addr, node.Id)
+	if err != nil {
+		return resp, err
+	}
+	resp, err = redis.EnableWrite(addr, node.Id)
+	if err != nil {
+		return resp, err
+	}
+	return resp, nil
+}
+
+func rwSlaveState(node *Node) (string, error) {
+	addr := fmt.Sprintf("%s:%s", node.Ip, node.Port)
+	resp, err := redis.EnableRead(addr, node.Id)
+	if err != nil {
+		return resp, err
+	}
+	resp, err = redis.DisableWrite(addr, node.Id)
+	if err != nil {
+		return resp, err
+	}
+	return resp, nil
+}
+
+func rwReplicasState(nodes []*Node) error {
+	for _, node := range nodes {
+		_, err := rwSlaveState(node)
+		if err != nil {
+			return err
+		}
+	}
+	return nil
+}

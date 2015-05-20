@@ -147,8 +147,16 @@ func action(c *cli.Context) {
 		} else {
 			fmt.Println(green(resp))
 		}
+		resp, err = rwMasterState(node)
+		if err != nil {
+			fmt.Printf("%s\n", red("FAILED to chmod, please check"))
+		}
 		slaves := getSlaves(allnodes, node)
 		fmt.Printf("%-40s", "setting replicas...")
+		err = rwReplicasState(slaves)
+		if err != nil {
+			fmt.Printf("%s\n", red("FAILED to chmod, please check"))
+		}
 		resp, err = setReplicas(slaves)
 		if err != nil {
 			fmt.Printf("%s\n", red(resp))
