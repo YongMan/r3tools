@@ -1,6 +1,7 @@
 package main
 
 import (
+	"./command/control"
 	"./command/initialize"
 	"github.com/codegangsta/cli"
 	"os"
@@ -9,6 +10,7 @@ import (
 func main() {
 	cmds := []cli.Command{
 		initialize.Command,
+		control.Command,
 	}
 
 	app := cli.NewApp()
